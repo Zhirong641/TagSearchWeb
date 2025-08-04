@@ -19,9 +19,10 @@ const std::string tag_dir = "/mnt/shared/data/tag";
 const std::string tag_file = "/mnt/shared/data/all_tags_translated_250722.csv"; // 标签文件路径
 const std::string cg_list_file = "/mnt/shared/data/cglist_250722.csv"; // CG 列表文件路径
 const int page_size = 20;
-const bool cache_cg_info = false; // 是否缓存 CG 信息
+const bool cache_cg_info = true; // 是否缓存 CG 信息
 Matrix<std::string, 2> cached_cg_list;
 Matrix<Matrix<std::string, 2>, 1> cached_tags;
+constexpr size_t max_image_count = 10000; // 最大图片数量
 
 Matrix<Matrix<std::string, 2>, 1> load_tags(const Matrix<std::string, 2>& cglist) {
     char splitChar = matrix_impl::getMatrixConfig().splitChar;
@@ -173,6 +174,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 fs::path image_file = image_dir / relative_path;
                 // 检查图片文件是否存在
                 if (fs::exists(image_file)) {
+                    if (images.size() < max_image_count)
                     images.push_back(relative_path.string()); // 只保存图片文件名
                 }
             }
@@ -222,6 +224,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
             }
         }
         if (match) {
+            if (images.size() < max_image_count)
             images.push_back(cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp"); // 只保存图片文件名
         }
     }
@@ -472,7 +475,7 @@ int main() {
         double score = 0.0;
         while (fin >> tag >> score) {
             if (tag_translation_map.find(tag) != tag_translation_map.end()) {
-                oss << tag << " (" << tag_translation_map[tag] << ") " << "<br>";
+                oss << tag << " (" << tag_translation_map[tag] << ") " << " " << score << "<br>";
             } else {
                 oss << tag << "<br>";
             }
