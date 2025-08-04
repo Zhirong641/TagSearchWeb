@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>标签图像生成</title>
+    <div id="infoBox" class="info-box" style="display:none; position:absolute;"></div>
+    <style>
+        input, button { font-size: 18px; padding: 5px; }
+        .suggestions { border: 1px solid #ccc; max-height: 150px; overflow-y: auto; }
+        .suggestions div { padding: 4px; cursor: pointer; }
+        .suggestions div:hover { background: #eee; }
+        .info-box {
+            position: absolute;
+            background: rgba(255, 255, 255, 0.95);
+            border: 1px solid #ccc;
+            padding: 8px;
+            font-size: 14px;
+            color: #333;
+            box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.2);
+            z-index: 1000;
+            max-width: 300px;
+            /* ✅ 去掉滚动条限制 */
+            max-height: none;
+            overflow: visible;
+            pointer-events: none;
+            white-space: normal;  /* 允许自动换行 */
+            word-break: break-word;
+        }
+    </style>
+</head>
+<body>
+    <h1>输入标签：</h1>
+    <input id="tagInput" type="text" autocomplete="off">
+    <div id="suggestions" class="suggestions"></div>
+    <br><br>
+    <button onclick="searchImage()">搜索</button>
+    <div id="result" style="margin-top:20px;"></div>
+    <div id="infoBox" class="info-box" style="display:none; position:absolute;"></div>
+
+    <script>
+        let tagBox = document.getElementById('tagInput');
+        let suggestionBox = document.getElementById('suggestions');
+
+        tagBox.addEventListener('input', () => {
+            let all = tagBox.value.split(/[,， ]+/);
+            let last = all[all.length - 1].trim();
+
+            if (last === "") {
+                suggestionBox.innerHTML = "";
+                return;
+            }
+
+            fetch('/tags?filter=' + encodeURIComponent(last))
+                .then(res => res.json())
+                .then(data => {
+                    suggestionBox.innerHTML = "";
+                    data.forEach(tag => {
+                        let div = document.createElement('div');
+                        div.textContent = tag;
+                        div.onclick = () => {
+                            all[all.length - 1] = tag; // 替换最后一个
+                            tagBox.value = all.join(', ') + ', ';
+                            suggestionBox.innerHTML = "";
+                        };
+                        suggestionBox.appendChild(div);
+                    });
+                });
+        });
+
+        function generateImage() {
+            const tags = document.getElementById('tagInput').value.trim();
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>正在生成中，请稍候...</p>';
+
+            // 先验证标签合法性
+            fetch('/validate', {
+                method: 'POST',
+                body: tags,
+                headers: {
+                    'Content-Type': 'text/plain'
+                }
+            }).then(res => {
+                if (!res.ok) {
+                    return res.text().then(msg => {
+                        alert(msg);
+                        resultDiv.innerHTML = '<p style="color:red;">' + msg + '</p>';
+                        throw new Error("标签不合法");
+                    });
+                } else {
+                    return res.text();
+                }
+            }).then(() => {
+                // 模拟生成耗时（1秒），真实情况你可以替换成生成请求或轮询
+                // setTimeout(() => {
+                //     resultDiv.innerHTML =
+                //         '<h2>生成结果（标签：' + tags + '）：</h2><img src="/sample.png" width="512">';
+                // }, 3000);
+                fetch('/generate_image', {
+                    method: 'POST',
+                    body: JSON.stringify({ tags: tags }),
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(msg => {
+                            resultDiv.innerHTML = '<p style="color:red;">生成失败：' + msg + '</p>';
+                            throw new Error("生成失败");
+                        });
+                    }
+                    return res.blob();
+                })
+                .then(blob => {
+                    const url = URL.createObjectURL(blob);
+                    resultDiv.innerHTML =
+                        `<h2>生成完成（标签：${tags}）</h2><img src="${url}" width="512">`;
+                })
+            }).catch((err) => {
+                console.log(err);
+            });
+        }
+
+        function searchImage() {
+            const tags = document.getElementById('tagInput').value.trim();
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>正在搜索中，请稍候...</p>';
+
+            fetch('/search', {
+                    method: 'POST',
+                    body: JSON.stringify({ tags: tags }),
+                    headers: { 'Content-Type': 'application/json' }
+                })
+                .then(res => {
+                    if (!res.ok) {
+                        return res.text().then(msg => {
+                            resultDiv.innerHTML = '<p style="color:red;">搜索失败：' + msg + '</p>';
+                            throw new Error("搜索失败");
+                        });
+                    }
+                    return res.json();
+                })
+                .then(data => {
+                    const images = data.images || [];
+
+                    if (images.length === 0) {
+                        resultDiv.innerHTML = '<p>没有找到相关图像。</p>';
+                        return;
+                    }
+
+                    const pageSize = 100;
+                    let currentPage = 1;
+
+                    function renderPage(page) {
+                        const start = (page - 1) * pageSize;
+                        const end = Math.min(start + pageSize, images.length);
+                        const pageData = images.slice(start, end);
+
+                        let html = `<h2>搜索结果（第 ${page} 页，共 ${Math.ceil(images.length / pageSize)} 页）</h2>`;
+                        html += '<div style="display:flex;flex-wrap:wrap;">';
+
+                        pageData.forEach(filename => {
+                            html += `
+                                <div style="margin:10px;text-align:center">
+                                    <a href="/img/${filename}" target="_blank">
+                                        <img src="/img/${filename}" width="200" onmouseover="loadImageInfoAtCursor(event, '${filename}')" onmouseout="hideInfo()">
+                                    </a><br>
+                                    ${filename}
+                                </div>
+                            `;
+                        });
+
+                        html += '</div><div style="margin-top:20px;">';
+
+                        // 上一页按钮
+                        if (page > 1) {
+                            html += `<button onclick="changePage(${page - 1})">上一页</button> `;
+                        }
+
+                        // 页码按钮
+                        const totalPages = Math.ceil(images.length / pageSize);
+                        for (let i = 1; i <= totalPages; i++) {
+                            if (i === page) {
+                                html += `<strong style="margin:0 5px;">[${i}]</strong>`;
+                            } else {
+                                html += `<a href="javascript:void(0);" onclick="changePage(${i})" style="margin:0 5px;">${i}</a>`;
+                            }
+                        }
+
+                        // 下一页按钮
+                        if (page < totalPages) {
+                            html += ` <button onclick="changePage(${page + 1})">下一页</button>`;
+                        }
+
+                        html += '</div>';
+
+                        resultDiv.innerHTML = html;
+                    }
+
+                    // 定义翻页函数到全局
+                    window.changePage = function (page) {
+                        currentPage = page;
+                        renderPage(currentPage);
+                    }
+
+                    // 初次渲染第一页
+                    renderPage(currentPage);
+                })
+                .catch(err => {
+                    console.error(err);
+                    if (!resultDiv.innerHTML.includes('搜索失败')) {
+                        resultDiv.innerHTML = '<p style="color:red;">搜索失败，请稍后再试。</p>';
+                    }
+                });
+        }
+
+        function loadImageInfo(img, filename) {
+            const info = document.getElementById('infoBox');
+            info.innerHTML = '加载中...';
+            info.style.display = 'block';
+
+            const rect = img.getBoundingClientRect();
+            info.style.left = (rect.right + 10) + 'px';
+            info.style.top = rect.top + 'px';
+
+            fetch(`/image_info?file=${encodeURIComponent(filename)}`)
+                .then(res => res.ok ? res.text() : Promise.reject('无法获取信息'))
+                .then(text => {
+                    info.innerHTML = text;
+                })
+                .catch(err => {
+                    info.innerHTML = `<span style="color:red;">加载失败</span>`;
+                    console.error(err);
+                });
+        }
+    
+       function loadImageInfoAtCursor(e, filename) {
+            const info = document.getElementById('infoBox');
+
+            // 只请求一次
+            if (!info.dataset.filename || info.dataset.filename !== filename) {
+                info.innerHTML = '加载中...';
+                info.dataset.filename = filename;
+
+                fetch(`/image_info?file=${encodeURIComponent(filename)}`)
+                    .then(res => res.ok ? res.text() : Promise.reject('无法获取信息'))
+                    .then(text => {
+                        if (info.dataset.filename === filename) {
+                            info.innerHTML = text;
+                        }
+                    })
+                    .catch(err => {
+                        info.innerHTML = `<span style="color:red;">加载失败</span>`;
+                        console.error(err);
+                    });
+            }
+
+            // 暂时显示以计算宽高
+            info.style.display = 'block';
+            info.style.left = '0px';
+            info.style.top = '0px'; // 初始位置防止闪动
+
+            const tooltipWidth = info.offsetWidth;
+            const tooltipHeight = info.offsetHeight;
+            const pageWidth = document.documentElement.clientWidth;
+            const pageHeight = document.documentElement.clientHeight;
+
+            let left = e.pageX + 15;
+            let top = e.pageY + 15;
+
+            // 如果右边放不下就显示在左边
+            if (left + tooltipWidth > pageWidth) {
+                left = e.pageX - tooltipWidth - 15;
+            }
+
+            // 如果底部放不下就显示在上方
+            if (top + tooltipHeight > pageHeight + window.scrollY) {
+                top = e.pageY - tooltipHeight - 15;
+            }
+
+            // 设置位置
+            info.style.left = left + 'px';
+            info.style.top = top + 'px';
+        }
+
+        function hideInfo() {
+            const info = document.getElementById('infoBox');
+            info.style.display = 'none';
+        }
+    </script>
+</body>
+</html>
