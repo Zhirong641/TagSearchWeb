@@ -16,13 +16,13 @@ namespace fs = std::filesystem;
 
 const std::string image_dir = "/mnt/shared/data/webp";
 const std::string tag_dir = "/mnt/shared/data/tag";
-const std::string tag_file = "/mnt/shared/data/all_tags_translated_250722.csv"; // 标签文件路径
-const std::string cg_list_file = "/mnt/shared/data/cglist_250722.csv"; // CG 列表文件路径
+const std::string tag_file = "/mnt/shared/data/all_tags_translated_250722.csv"; // Tag file path
+const std::string cg_list_file = "/mnt/shared/data/cglist_250722.csv"; // CG list file path
 const int page_size = 20;
-const bool cache_cg_info = true; // 是否缓存 CG 信息
+const bool cache_cg_info = true; // Whether to cache CG info
 Matrix<std::string, 2> cached_cg_list;
 Matrix<Matrix<std::string, 2>, 1> cached_tags;
-constexpr size_t max_image_count = 10000; // 最大图片数量
+constexpr size_t max_image_count = 10000; // Maximum number of images
 
 Matrix<Matrix<std::string, 2>, 1> load_tags(const Matrix<std::string, 2>& cglist) {
     char splitChar = matrix_impl::getMatrixConfig().splitChar;
@@ -48,8 +48,7 @@ Matrix<Matrix<std::string, 2>, 1> load_tags(const Matrix<std::string, 2>& cglist
     return tags;
 }
 
-
-// 加载标签列表, 返回Nx2的矩阵,第一列为英文标签，第二列为日文标签
+// Load tag list, returns Nx2 matrix, first column is English tag, second column is Japanese tag
 Matrix<std::string, 2> load_tags(const std::string& filepath) {
     Matrix<std::string, 2> tags;
     std::ifstream fin(filepath);
@@ -82,7 +81,7 @@ std::map<std::string, std::string> load_id_title_map(const std::string& filepath
     return id_title_map;
 }
 
-// 读取整个文件内容到字符串
+// Read entire file content into a string
 std::string read_file(const std::string& filepath) {
     std::ifstream fin(filepath);
     if (!fin) return "Error: HTML file not found.";
@@ -92,13 +91,13 @@ std::string read_file(const std::string& filepath) {
     return ss.str();
 }
 
-// 将标签列表过滤成 JSON
+// Filter tag list into JSON
 std::string filter_tags(const Matrix<std::string, 2>& all_tags, const std::string& keyword) {
     std::ostringstream oss;
     oss << "[";
     bool first = true;
     for (size_t i = 0; i < all_tags.extent(0); ++i) {
-        // 获取英文标签
+        // Get English tag
         const auto& tag = all_tags(i, 0);
         if (tag.find(keyword) != std::string::npos) {
             if (!first) oss << ",";
@@ -136,10 +135,10 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 std::cout << "tag_matrix size: " << tag_matrix.extent(0) << "x" << tag_matrix.extent(1) << std::endl;
             }
             bool match = true;
-            // 检查每个标签是否在矩阵中
+            // Check if each tag is in the matrix
             for (const auto& tag : tags) {
                 if (tag[0] == '-') {
-                    // 如果标签以 '-' 开头，表示排除该标签
+                    // If tag starts with '-', exclude this tag
                     std::string exclude_tag = tag.substr(1);
                     bool found = false;
                     for (size_t i = 0; i < tag_matrix.extent(0); ++i) {
@@ -153,7 +152,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                         break;
                     }
                 } else {
-                    // 正常匹配标签
+                    // Normal tag match
                     bool found = false;
                     for (size_t i = 0; i < tag_matrix.extent(0); ++i) {
                         if (tag_matrix(i, 0) == tag) {
@@ -168,14 +167,14 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 }
             }
             if (match) {
-                // 如果匹配，添加对应的图片文件名
+                // If matched, add corresponding image filename
                 fs::path relative_path = fs::relative(entry.path(), tag_dir);
                 relative_path.replace_extension(".webp");
                 fs::path image_file = image_dir / relative_path;
-                // 检查图片文件是否存在
+                // Check if image file exists
                 if (fs::exists(image_file)) {
                     if (images.size() < max_image_count)
-                    images.push_back(relative_path.string()); // 只保存图片文件名
+                    images.push_back(relative_path.string()); // Only save image filename
                 }
             }
         }
@@ -192,10 +191,10 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
         // }
         Matrix<std::string, 2> tag_matrix = cached_tags(i);
         bool match = true;
-        // 检查每个标签是否在矩阵中
+        // Check if each tag is in the matrix
         for (const auto& tag : tags) {
             if (tag[0] == '-') {
-                // 如果标签以 '-' 开头，表示排除该标签
+                // If tag starts with '-', exclude this tag
                 std::string exclude_tag = tag.substr(1);
                 bool found = false;
                 for (size_t j = 0; j < tag_matrix.extent(0); ++j) {
@@ -209,7 +208,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                     break;
                 }
             } else {
-                // 正常匹配标签
+                // Normal tag match
                 bool found = false;
                 for (size_t j = 0; j < tag_matrix.extent(0); ++j) {
                     if (tag_matrix(j, 0) == tag) {
@@ -225,7 +224,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
         }
         if (match) {
             if (images.size() < max_image_count)
-            images.push_back(cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp"); // 只保存图片文件名
+            images.push_back(cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp"); // Only save image filename
         }
     }
     return images;
@@ -265,9 +264,9 @@ int main() {
         std::cout << "CG info caching is disabled." << std::endl;
     }
 
-    matrix_impl::getMatrixConfig().splitChar = ' '; // 设置分隔符为逗号
+    matrix_impl::getMatrixConfig().splitChar = ' '; // Set delimiter to space
 
-    // 页面
+    // Main page
     std::string html_cache;
     svr.Get("/", [&](const httplib::Request& req, httplib::Response& res) {
         if (html_cache.empty()) {
@@ -276,21 +275,21 @@ int main() {
         res.set_content(html_cache, "text/html");
     });
 
-    // 过滤标签 API
+    // Tag filter API
     svr.Get("/tags", [&](const httplib::Request& req, httplib::Response& res) {
         auto it = req.get_param_value("filter");
         std::string json = filter_tags(all_tags, it);
         res.set_content(json, "application/json");
     });
 
-    // 验证标签是否合法
+    // Validate tags
     svr.Post("/validate", [&](const httplib::Request& req, httplib::Response& res) {
         std::string body = req.body;
         std::vector<std::string> input_tags;
         std::istringstream ss(body);
         std::string tag;
 
-        // 拆分输入标签（支持逗号或空格）
+        // Split input tags (support comma or space)
         while (std::getline(ss, tag, ',')) {
             tag.erase(std::remove_if(tag.begin(), tag.end(), ::isspace), tag.end());
             if (!tag.empty()) input_tags.push_back(tag);
@@ -305,7 +304,7 @@ int main() {
 
         if (!invalid.empty()) {
             std::ostringstream err;
-            err << "以下标签不合法：";
+            err << "Invalid tags: ";
             for (const auto& t : invalid) err << t << " ";
             res.set_content(err.str(), "text/plain");
             res.status = 400;
@@ -314,7 +313,7 @@ int main() {
         }
     });
 
-    // 图片资源
+    // Image resource
     svr.Get("/sample.png", [&](const httplib::Request& req, httplib::Response& res) {
         std::ifstream in("../sample.png", std::ios::binary);
         if (!in) {
@@ -327,22 +326,22 @@ int main() {
         res.set_content(oss.str(), "image/png");
     });
 
-    // // 模拟图片生成接口
+    // // Simulate image generation API
     // svr.Post("/generate_image", [&](const httplib::Request& req, httplib::Response& res) {
     //     try {
     //         auto j = json::parse(req.body);
     //         std::string tags = j["tags"];
 
-    //         std::cout << "收到生成请求，标签：" << tags << std::endl;
+    //         std::cout << "Received generation request, tags: " << tags << std::endl;
 
-    //         // 模拟生成耗时
+    //         // Simulate generation delay
     //         std::this_thread::sleep_for(std::chrono::seconds(2));
 
-    //         // 返回图片（你可以换成实际生成的图片路径）
+    //         // Return image (replace with actual generated image path)
     //         std::ifstream in("../sample.png", std::ios::binary);
     //         if (!in) {
     //             res.status = 500;
-    //             res.set_content("示例图片不存在", "text/plain");
+    //             res.set_content("Sample image not found", "text/plain");
     //             return;
     //         }
 
@@ -352,7 +351,7 @@ int main() {
 
     //     } catch (const std::exception& e) {
     //         res.status = 400;
-    //         res.set_content(std::string("请求解析失败: ") + e.what(), "text/plain");
+    //         res.set_content(std::string("Failed to parse request: ") + e.what(), "text/plain");
     //     }
     // });
     std::vector<std::string> search_result_images;
@@ -361,12 +360,12 @@ int main() {
             auto j = json::parse(req.body);
             std::string tags = j["tags"];
 
-            std::cout << "搜索标签：" << tags << std::endl;
+            std::cout << "Search tags: " << tags << std::endl;
 
             std::vector<std::string> tag_list = split_tags(tags);
             if (tag_list.empty()) {
                 res.status = 400;
-                res.set_content("标签不能为空", "text/plain");
+                res.set_content("Tags cannot be empty", "text/plain");
                 return;
             }
             // search_result_images = get_image_files_by_tags(tag_list);
@@ -381,7 +380,7 @@ int main() {
         } catch (const std::exception& e) {
             std::cerr << __LINE__ << " Error parsing request: " << e.what() << std::endl;
             res.status = 400;
-            res.set_content(std::string("请求解析失败: ") + e.what(), "text/plain");
+            res.set_content(std::string("Failed to parse request: ") + e.what(), "text/plain");
         }
     });
 
@@ -400,7 +399,7 @@ int main() {
     //         int end = std::min<int>(start + page_size, search_result_images.size());
 
     //         std::ostringstream html;
-    //         html << "<html><body><h1>图片画廊</h1><div style='display:flex;flex-wrap:wrap;'>";
+    //         html << "<html><body><h1>Image Gallery</h1><div style='display:flex;flex-wrap:wrap;'>";
 
     //         for (int i = start; i < end; ++i) {
     //             html << "<div style='margin:10px;text-align:center'>"
@@ -411,17 +410,17 @@ int main() {
 
     //         html << "</div><div style='margin-top:20px;'>";
     //         if (page > 1) {
-    //             html << "<a href='/gallery?page=" << (page - 1) << "'>上一页</a> ";
+    //             html << "<a href='/gallery?page=" << (page - 1) << "'>Previous</a> ";
     //         }
     //         if (page < total_pages) {
-    //             html << "<a href='/gallery?page=" << (page + 1) << "'>下一页</a>";
+    //             html << "<a href='/gallery?page=" << (page + 1) << "'>Next</a>";
     //         }
     //         html << "</div></body></html>";
 
     //         res.set_content(html.str(), "text/html");
     //     } catch (const std::exception& e) {
     //         res.status = 400;
-    //         res.set_content(std::string("请求解析失败: ") + e.what(), "text/plain");
+    //         res.set_content(std::string("Failed to parse request: ") + e.what(), "text/plain");
     //     }
     // });
 
@@ -434,7 +433,7 @@ int main() {
         if (!in) {
             std::cerr << "Error: Image file not found: " << path << std::endl;
             res.status = 404;
-            res.set_content("未找到图片", "text/plain");
+            res.set_content("Image not found", "text/plain");
             return;
         }
 
@@ -448,21 +447,21 @@ int main() {
         if (!req.has_param("file")) {
             std::cerr << "Error: Missing 'file' parameter in request." << std::endl;
             res.status = 400;
-            res.set_content("缺少 file 参数", "text/plain");
+            res.set_content("Missing file parameter", "text/plain");
             return;
         }
 
         std::string filename = req.get_param_value("file");
         std::string fullpath = image_dir + "/" + filename;
 
-        // 假设详细信息存在 .txt 文件中（img_001.webp → img_001.txt）
+        // Assume detailed info exists in .txt file (img_001.webp → img_001.txt)
         std::string tag_info_path = tag_dir + "/" + filename.substr(0, filename.find_last_of('.')) + ".txt";
 
         std::ifstream fin(tag_info_path);
         if (!fin) {
             std::cerr << "Error: Tag info file not found: " << tag_info_path << std::endl;
             res.status = 404;
-            res.set_content("找不到该图片的描述信息", "text/plain");
+            res.set_content("Description for this image not found", "text/plain");
             return;
         }
 
