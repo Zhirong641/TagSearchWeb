@@ -15,41 +15,46 @@ using json = nlohmann::json;
 namespace fs = std::filesystem;
 
 const std::string image_dir = "/mnt/shared/data/webp";
-const std::string tag_dir = "/mnt/shared/data/tag";
-const std::string tag_file = "/mnt/shared/data/all_tags_translated_250722.csv"; // Tag file path
+const std::string tag_dir = "/mnt/shared/data/img2tags_json";
+const std::string tag_file = "/mnt/shared/data/all_tags_ja.csv"; // Tag file path
 const std::string cg_list_file = "/mnt/shared/data/cglist_250722.csv"; // CG list file path
 const int page_size = 20;
 const bool cache_cg_info = true; // Whether to cache CG info
 Matrix<std::string, 2> cached_cg_list;
-Matrix<Matrix<std::string, 2>, 1> cached_tags;
+Matrix<json, 1> cached_tags;
 constexpr size_t max_image_count = 10000; // Maximum number of images
+std::map<std::string, std::string> tag_translation_map;
 
-Matrix<Matrix<std::string, 2>, 1> load_tags(const Matrix<std::string, 2>& cglist) {
-    char splitChar = matrix_impl::getMatrixConfig().splitChar;
-    matrix_impl::getMatrixConfig().splitChar = ' ';
-    Matrix<Matrix<std::string, 2>, 1> tags(cglist.extent(0));
+json load_json(const std::string& file_path) {
+    std::ifstream ifs(file_path);
+    if (!ifs) {
+        std::cerr << "Failed to open JSON file." << std::endl;
+        return json();
+    }
+
+    json j;
+    ifs >> j;
+    return j;
+}
+
+Matrix<json, 1> load_tags(const Matrix<std::string, 2>& cglist) {
+    Matrix<json, 1> tags_list(cglist.extent(0));
     for (size_t i = 0; i < cglist.extent(0); ++i) {
         if (i % 50000 == 0) {
             std::cout << "Tag loading progress: " << (i * 100.0 / cglist.extent(0)) << "%" << std::endl;
         }
         const auto& row = cglist[i];
-        std::string tag_path = tag_dir + "/" + row[4] + "/image_" + row[5] + ".txt";
+        std::string tag_path = tag_dir + "/" + row[4] + "/image_" + row[5] + ".json";
         if (!fs::exists(tag_path)) {
             continue;
         }
-        std::ifstream fin(tag_path);
-        if (!fin) {
-            std::cerr << "Failed to open tag file: " << tag_path << std::endl;
-            continue;
-        }
-        fin >> tags(i);
+        tags_list(i) = load_json(tag_path);
     }
-    matrix_impl::getMatrixConfig().splitChar = splitChar;
-    return tags;
+    return tags_list;
 }
 
 // Load tag list, returns Nx2 matrix, first column is English tag, second column is Japanese tag
-Matrix<std::string, 2> load_tags(const std::string& filepath) {
+Matrix<std::string, 2> load_tags_translation(const std::string& filepath) {
     Matrix<std::string, 2> tags;
     std::ifstream fin(filepath);
     if (!fin) {
@@ -109,7 +114,7 @@ std::string filter_tags(const Matrix<std::string, 2>& all_tags, const std::strin
     return oss.str();
 }
 
-std::vector<std::string> split_tags(const std::string& tags, const char delimiter = ',') {
+std::vector<std::string> split(const std::string& tags, const char delimiter = ',') {
     std::vector<std::string> result;
     std::istringstream ss(tags);
     std::string tag;
@@ -120,33 +125,72 @@ std::vector<std::string> split_tags(const std::string& tags, const char delimite
     return result;
 }
 
-std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& tags) {
+bool has_tag(const json& j, const std::string& tag) {
+    if (!j.contains("tags") || !j["tags"].is_object()) {
+        return false; // No tags found
+    }
+    const auto& tags = j["tags"];
+    for (const auto& category_pair : tags.items()) {
+        const auto& tag_group = category_pair.value();
+        if (tag_group.is_object() && tag_group.contains(tag)) {
+            return true; // Tag found
+        }
+    }
+    return false; // Tag not found
+}
+
+std::optional<float> get_tag_score(const json& j, const std::string& tag) {
+    if (!j.contains("tags") || !j["tags"].is_object()) {
+        return std::nullopt; // No tags found
+    }
+    const auto& tags = j["tags"];
+    for (const auto& category_pair : tags.items()) {
+        const auto& tag_group = category_pair.value();
+        if (tag_group.is_object() && tag_group.contains(tag)) {
+            return tag_group[tag].get<float>(); // Return score
+        }
+    }
+    return std::nullopt; // Tag not found
+}
+
+std::pair<std::string, float> parse_tag_and_score(const std::string& input) {
+    size_t pos = input.rfind(':');
+    if (pos == std::string::npos) {
+        return {input, 0.0f};
+    }
+
+    std::string possible_score = input.substr(pos + 1);
+    char* endptr = nullptr;
+    float score = std::strtof(possible_score.c_str(), &endptr);
+
+    if (endptr != nullptr && *endptr == '\0') {
+        std::string tag = input.substr(0, pos);
+        return {tag, score};
+    } else {
+        return {input, 0.0f};
+    }
+}
+
+std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags) {
     std::vector<std::string> images;
     int count = 0;
     for (const auto& entry : fs::recursive_directory_iterator(tag_dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".txt") {
             std::string filename = entry.path().filename().string();
-            std::ifstream fin(entry.path());
-            Matrix<std::string, 2> tag_matrix;
-            if (!fin) continue;
-            fin >> tag_matrix;
+            json image_tags = load_json(entry.path().string());
             if (++count % 50000 == 0) {
                 std::cout << "Processed file " << count << std::endl;
-                std::cout << "tag_matrix size: " << tag_matrix.extent(0) << "x" << tag_matrix.extent(1) << std::endl;
             }
             bool match = true;
             // Check if each tag is in the matrix
-            for (const auto& tag : tags) {
-                if (tag[0] == '-') {
+            for (const auto& input_tag : input_tags) {
+                if (input_tag[0] == '-') {
                     // If tag starts with '-', exclude this tag
-                    std::string exclude_tag = tag.substr(1);
+                    std::string exclude_tag = input_tag.substr(1);
                     bool found = false;
-                    for (size_t i = 0; i < tag_matrix.extent(0); ++i) {
-                        if (tag_matrix(i, 0) == exclude_tag) {
-                            found = true;
-                            break;
-                        }
-                    }
+                    auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                    auto tag_score = get_tag_score(image_tags, input_tag_name);
+                    found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                     if (found) {
                         match = false;
                         break;
@@ -154,12 +198,9 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 } else {
                     // Normal tag match
                     bool found = false;
-                    for (size_t i = 0; i < tag_matrix.extent(0); ++i) {
-                        if (tag_matrix(i, 0) == tag) {
-                            found = true;
-                            break;
-                        }
-                    }
+                    auto [input_tag_name, input_score] = parse_tag_and_score(input_tag);
+                    auto tag_score = get_tag_score(image_tags, input_tag_name);
+                    found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                     if (!found) {
                         match = false;
                         break;
@@ -182,40 +223,36 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
     return images;
 }
 
-std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& tags,
-    const Matrix<std::string, 2>& cached_cg_list, const Matrix<Matrix<std::string, 2>, 1>& cached_tags) {
+std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags,
+    const Matrix<std::string, 2>& cached_cg_list, const Matrix<json, 1>& cached_tags) {
+    assert(cached_cg_list.extent(0) == cached_tags.extent(0));
     std::vector<std::string> images;
     for (size_t i = 0; i < cached_tags.extent(0); ++i) {
         // if (i % 50000 == 0) {
         //     std::cout << "Processed tag " << i << " of " << cached_tags.extent(0) << std::endl;
         // }
-        Matrix<std::string, 2> tag_matrix = cached_tags(i);
+        auto& image_tags = cached_tags[i];
+        if (image_tags.is_null()) {
+            continue; // Skip if no tags available
+        }
         bool match = true;
         // Check if each tag is in the matrix
-        for (const auto& tag : tags) {
-            if (tag[0] == '-') {
+        for (const auto& input_tag : input_tags) {
+            if (input_tag[0] == '-') {
                 // If tag starts with '-', exclude this tag
-                std::string exclude_tag = tag.substr(1);
-                bool found = false;
-                for (size_t j = 0; j < tag_matrix.extent(0); ++j) {
-                    if (tag_matrix(j, 0) == exclude_tag) {
-                        found = true;
-                        break;
-                    }
-                }
+                std::string exclude_tag = input_tag.substr(1);
+                auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                auto tag_score = get_tag_score(image_tags, input_tag_name);
+                bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                 if (found) {
                     match = false;
                     break;
                 }
             } else {
                 // Normal tag match
-                bool found = false;
-                for (size_t j = 0; j < tag_matrix.extent(0); ++j) {
-                    if (tag_matrix(j, 0) == tag) {
-                        found = true;
-                        break;
-                    }
-                }
+                auto [input_tag_name, input_score] = parse_tag_and_score(input_tag);
+                auto tag_score = get_tag_score(image_tags, input_tag_name);
+                bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                 if (!found) {
                     match = false;
                     break;
@@ -230,7 +267,85 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
     return images;
 }
 
+enum class ImageRating {
+    Safe,
+    R15,
+    R18,
+    Unknown
+};
+
+ImageRating get_image_rating(const json& j) {
+    const auto& rating_group = j.contains("tags") && j["tags"].contains("9") ? j["tags"]["9"] : json();
+    if (!rating_group.is_object()) {
+        std::cerr << "Invalid JSON format: '9' tag is not an object" << std::endl;
+        return ImageRating::Unknown;
+    }
+
+    if (rating_group.contains("explicit") && rating_group["explicit"].is_number() && rating_group["explicit"].get<float>() > 0.5) {
+        return ImageRating::R18;
+    } else if ((rating_group.contains("sensitive") && rating_group["sensitive"].is_number() && rating_group["sensitive"].get<float>() > 0.6) ||
+               (rating_group.contains("questionable") && rating_group["questionable"].is_number() && rating_group["questionable"].get<float>() > 0.6)) {
+        return ImageRating::R15; // R15 for sensitive/questionable content
+    } else {
+        return ImageRating::Safe;
+    }
+}
+
+void print_tags(std::ostream& os, const json& j) {
+    if (!j.contains("tags") || !j["tags"].is_object()) {
+        std::cerr << "Invalid JSON format: missing 'tags' object" << std::endl;
+        return;
+    }
+
+    const auto& tags = j["tags"];
+    for (auto& category_pair : tags.items()) {
+        const auto& tag_group = category_pair.value();
+        if (!tag_group.is_object()) continue;
+
+        if (category_pair.key() == "0") {
+            os << "<strong style=\"color: blue;\">General Tags</strong> " << "<br>" << std::endl;
+        } else if (category_pair.key() == "4") {
+            os << "<strong style=\"color: green;\">Character Tags</strong> " << "<br>" << std::endl;
+        } else if (category_pair.key() == "9") {
+            ImageRating rating = get_image_rating(j);
+            os << "<strong style=\"color: orange;\">Rating Tags" << "(" <<
+                (rating == ImageRating::R18 ? "R18" : rating == ImageRating::R15 ? "R15" : "Safe") <<
+                ")</strong> " << "<br>" << std::endl;
+        }
+
+        for (auto& tag : tag_group.items()) {
+            os << tag.key() << "(" << (tag_translation_map.count(tag.key()) ? tag_translation_map[tag.key()] : "")
+                << ") " << std::fixed << std::setprecision(3) << tag.value().get<float>() << "<br>" << std::endl;
+        }
+    }
+}
+
 int main() {
+    // {
+    //     Matrix<std::string, 2> all_tags = load_tags(tag_file);
+    //     std::cout << "Loaded " << all_tags.extent(0) << " tags from " << tag_file << std::endl;
+    //     for (size_t i = 0; i < all_tags.extent(0); ++i) {
+    //         tag_translation_map[all_tags(i, 0)] = all_tags(i, 1);
+    //     }
+    //     json j = load_json("/mnt/shared/eva_tagger/img2tags_output/image_1.json");
+    //     if (j.is_null()) {
+    //         return 1;
+    //     }
+    //     print_tags(std::cout, j);
+    //     std::cout <<  static_cast<int>(get_image_rating(j)) << std::endl;
+    //     j = load_json("/mnt/shared/eva_tagger/img2tags_output/image_325.json");
+    //     if (j.is_null()) {
+    //         return 1;
+    //     }
+    //     std::cout <<  static_cast<int>(get_image_rating(j)) << std::endl;
+    //     std::cout <<  static_cast<int>(get_image_rating(load_json("/mnt/shared/eva_tagger/img2tags_output/image_16.json"))) << std::endl;
+    //     std::cout <<  static_cast<int>(get_image_rating(json())) << std::endl;
+    //     // Matrix<std::string, 2> all_tags = load_tags(tag_file);
+    //     // std::cout << "Loaded " << all_tags.extent(0) << " tags from " << tag_file << std::endl;
+    //     // std::cout << all_tags[6551] << std::endl;
+
+    //     return 0;
+    // }
     // matrix_impl::getMatrixConfig().splitChar = ' ';
     // auto images = get_image_files_by_tags({ "sleeve_cuffs" });
     // std::cout << "Found " << images.size() << " images for the tag 'sleeve_cuffs':\n";
@@ -241,9 +356,8 @@ int main() {
     // return 0;
 
     httplib::Server svr;
-    Matrix<std::string, 2> all_tags = load_tags(tag_file);
+    Matrix<std::string, 2> all_tags = load_tags_translation(tag_file);
     std::cout << "Loaded " << all_tags.extent(0) << " tags from " << tag_file << std::endl;
-    std::map<std::string, std::string> tag_translation_map;
     for (size_t i = 0; i < all_tags.extent(0); ++i) {
         tag_translation_map[all_tags(i, 0)] = all_tags(i, 1);
     }
@@ -259,7 +373,13 @@ int main() {
         fin >> cached_cg_list;
         std::cout << "Loaded CG list with " << cached_cg_list.extent(0) << " entries." << std::endl;
         cached_tags = load_tags(cached_cg_list);
-        std::cout << "Loaded tags for CG list." << std::endl;
+        int total_tags = 0;
+        for (size_t i = 0; i < cached_tags.extent(0); ++i) {
+            if (!cached_tags[i].is_null()) {
+                total_tags += 1;
+            }
+        }
+        std::cout << "Loaded tags for " << total_tags << "/" << cached_tags.extent(0) << " CG entries." << std::endl;
     } else {
         std::cout << "CG info caching is disabled." << std::endl;
     }
@@ -362,7 +482,7 @@ int main() {
 
             std::cout << "Search tags: " << tags << std::endl;
 
-            std::vector<std::string> tag_list = split_tags(tags);
+            std::vector<std::string> tag_list = split(tags);
             if (tag_list.empty()) {
                 res.status = 400;
                 res.set_content("Tags cannot be empty", "text/plain");
@@ -454,31 +574,15 @@ int main() {
         std::string filename = req.get_param_value("file");
         std::string fullpath = image_dir + "/" + filename;
 
-        // Assume detailed info exists in .txt file (img_001.webp → img_001.txt)
-        std::string tag_info_path = tag_dir + "/" + filename.substr(0, filename.find_last_of('.')) + ".txt";
-
-        std::ifstream fin(tag_info_path);
-        if (!fin) {
-            std::cerr << "Error: Tag info file not found: " << tag_info_path << std::endl;
-            res.status = 404;
-            res.set_content("Description for this image not found", "text/plain");
-            return;
-        }
+        // Assume detailed info exists in .json file (img_001.webp → img_001.json)
+        std::string tag_info_path = tag_dir + "/" + filename.substr(0, filename.find_last_of('.')) + ".json";
 
         std::ostringstream oss;
         if (id_title_map.find(filename.substr(0, filename.find_first_of('/'))) != id_title_map.end()) {
-            oss << "<strong>Image Source:</strong> " << id_title_map[filename.substr(0, filename.find_first_of('/'))] << "<br>";
+            oss << "<strong>Image Source: </strong> " << "<em>" << id_title_map[filename.substr(0, filename.find_first_of('/'))] << "</em><br>";
         }
 
-        std::string tag;
-        double score = 0.0;
-        while (fin >> tag >> score) {
-            if (tag_translation_map.find(tag) != tag_translation_map.end()) {
-                oss << tag << " (" << tag_translation_map[tag] << ") " << " " << score << "<br>";
-            } else {
-                oss << tag << "<br>";
-            }
-        }
+        print_tags(oss, load_json(tag_info_path));
 
         res.set_content(oss.str(), "text/html");
     });
