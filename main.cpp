@@ -175,7 +175,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
     std::vector<std::string> images;
     int count = 0;
     for (const auto& entry : fs::recursive_directory_iterator(tag_dir)) {
-        if (entry.is_regular_file() && entry.path().extension() == ".txt") {
+        if (entry.is_regular_file() && entry.path().extension() == ".json") {
             std::string filename = entry.path().filename().string();
             json image_tags = load_json(entry.path().string());
             if (++count % 50000 == 0) {
@@ -214,8 +214,11 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 fs::path image_file = image_dir / relative_path;
                 // Check if image file exists
                 if (fs::exists(image_file)) {
-                    if (images.size() < max_image_count)
-                    images.push_back(relative_path.string()); // Only save image filename
+                    if (images.size() < max_image_count) {
+                        images.push_back(relative_path.string()); // Only save image filename
+                    } else {
+                        return images; // Stop if max count reached
+                    }
                 }
             }
         }

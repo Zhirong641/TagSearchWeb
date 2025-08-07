@@ -185,3 +185,4 @@ Contributions are welcome! Please feel free to submit pull requests or open issu
 
 - [Project Source (GitHub)](https://github.com/Zhirong641/TagSearchWeb)
 - [Tag List](https://github.com/Zhirong641/TagSearchWeb/blob/master/data/all_tags_translated_250722.csv)
+- [Demo](http://198.13.48.172:8080/)
