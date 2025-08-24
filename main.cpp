@@ -171,9 +171,9 @@ std::pair<std::string, float> parse_tag_and_score(const std::string& input) {
     }
 }
 
-std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags) {
+std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags, int& count) {
     std::vector<std::string> images;
-    int count = 0;
+    count = 0;
     for (const auto& entry : fs::recursive_directory_iterator(tag_dir)) {
         if (entry.is_regular_file() && entry.path().extension() == ".json") {
             std::string filename = entry.path().filename().string();
@@ -214,6 +214,7 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                 fs::path image_file = image_dir / relative_path;
                 // Check if image file exists
                 if (fs::exists(image_file)) {
+                    count++;
                     if (images.size() < max_image_count) {
                         images.push_back(relative_path.string()); // Only save image filename
                     } else {
@@ -227,8 +228,9 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
 }
 
 std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags,
-    const Matrix<std::string, 2>& cached_cg_list, const Matrix<json, 1>& cached_tags) {
+    const Matrix<std::string, 2>& cached_cg_list, const Matrix<json, 1>& cached_tags, int& count) {
     assert(cached_cg_list.extent(0) == cached_tags.extent(0));
+    count = 0;
     std::vector<std::string> images;
     for (size_t i = 0; i < cached_tags.extent(0); ++i) {
         // if (i % 50000 == 0) {
@@ -263,8 +265,11 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
             }
         }
         if (match) {
-            if (images.size() < max_image_count)
-            images.push_back(cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp"); // Only save image filename
+            if (fs::exists(image_dir + "/" + cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp")) {
+                count++;
+                if (images.size() < max_image_count)
+                images.push_back(cached_cg_list(i, 4) + "/image_" + cached_cg_list(i, 5) + ".webp"); // Only save image filename
+            }
         }
     }
     return images;
@@ -494,11 +499,13 @@ int main() {
             // search_result_images = get_image_files_by_tags(tag_list);
 
             json response;
+            int count = 0;
             if (cache_cg_info) {
-                response["images"] = get_image_files_by_tags(tag_list, cached_cg_list, cached_tags);
+                response["images"] = get_image_files_by_tags(tag_list, cached_cg_list, cached_tags, count);
             } else {
-                response["images"] = get_image_files_by_tags(tag_list);
+                response["images"] = get_image_files_by_tags(tag_list, count);
             }
+            response["count"] = count;
             res.set_content(response.dump(), "application/json");
         } catch (const std::exception& e) {
             std::cerr << __LINE__ << " Error parsing request: " << e.what() << std::endl;

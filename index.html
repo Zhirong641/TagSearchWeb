@@ -147,6 +147,7 @@
                 })
                 .then(data => {
                     const images = data.images || [];
+                    const count = data.count || 0;
 
                     if (images.length === 0) {
                         resultDiv.innerHTML = '<p>No related images found.</p>';
@@ -161,7 +162,7 @@
                         const end = Math.min(start + pageSize, images.length);
                         const pageData = images.slice(start, end);
 
-                        let html = `<h2>Search Results (Page ${page} of ${Math.ceil(images.length / pageSize)})</h2>`;
+                        let html = `<h2>Search Results: ${count} (Page ${page} of ${Math.ceil(images.length / pageSize)})</h2>`;
                         html += '<div style="display:flex;flex-wrap:wrap;">';
 
                         pageData.forEach(filename => {
