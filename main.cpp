@@ -119,7 +119,9 @@ std::vector<std::string> split(const std::string& tags, const char delimiter = '
     std::istringstream ss(tags);
     std::string tag;
     while (std::getline(ss, tag, delimiter)) {
-        tag.erase(std::remove_if(tag.begin(), tag.end(), ::isspace), tag.end());
+        tag = tag.substr(0, tag.find_last_not_of(" \n\r\t") + 1); // Trim right
+        tag = tag.substr(tag.find_first_not_of(" \n\r\t")); // Trim left
+        // tag.erase(std::remove_if(tag.begin(), tag.end(), ::isspace), tag.end());
         if (!tag.empty()) result.push_back(tag);
     }
     return result;
@@ -171,6 +173,26 @@ std::pair<std::string, float> parse_tag_and_score(const std::string& input) {
     }
 }
 
+std::vector<std::string> extract_tags(const std::string &input) {
+    std::string s = input;
+    if (!s.empty() && s.front() == '[') s.erase(0, 1);
+    if (!s.empty() && s.back() == ']') s.pop_back();
+
+    std::vector<std::string> tags;
+    std::stringstream ss(s);
+    std::string tag;
+
+    while (std::getline(ss, tag, ',')) {
+        // 只去掉 tag 前后空格，保留中间空格
+        auto start = std::find_if_not(tag.begin(), tag.end(), ::isspace);
+        auto end   = std::find_if_not(tag.rbegin(), tag.rend(), ::isspace).base();
+        if (start < end) {  
+            tags.emplace_back(start, end);
+        }
+    }
+    return tags;
+}
+
 std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>& input_tags, int& count) {
     std::vector<std::string> images;
     count = 0;
@@ -183,12 +205,53 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
             }
             bool match = true;
             // Check if each tag is in the matrix
+            std::string tag_group = "";
             for (const auto& input_tag : input_tags) {
-                if (input_tag[0] == '-') {
+                if (!tag_group.empty() && input_tag.back() != ']' && input_tag[0] != '[') {
+                    tag_group += input_tag + ",";
+                    continue;
+                }
+                if (input_tag[0] == '[') {
+                    tag_group += input_tag + ',';
+                } else if (input_tag.back() == ']') {
+                    tag_group += input_tag;
+                    // Extract tags from the input
+                    auto tags = extract_tags(tag_group);
+                    bool match_curr_tag_group = false;
+                    for (const auto& tag : tags) {
+                        if (tag[0] == '-') {
+                            std::string exclude_tag = tag.substr(1);
+                            auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                            std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                            std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
+                            auto tag_score = get_tag_score(image_tags, input_tag_name);
+                            bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
+                            if (!found) {
+                                match_curr_tag_group = true;
+                                break;
+                            }
+                        } else {
+                            std::string include_tag = tag;
+                            auto [input_tag_name, input_score] = parse_tag_and_score(include_tag);
+                            std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                            std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
+                            auto tag_score = get_tag_score(image_tags, input_tag_name);
+                            bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
+                            if (found) {
+                                match_curr_tag_group = true;
+                                break;
+                            }
+                        }
+                    }
+                    match = match && match_curr_tag_group;
+                    tag_group = ""; // Reset for next group
+                } else if (input_tag[0] == '-') {
                     // If tag starts with '-', exclude this tag
                     std::string exclude_tag = input_tag.substr(1);
                     bool found = false;
                     auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                    std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                    std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
                     auto tag_score = get_tag_score(image_tags, input_tag_name);
                     found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                     if (found) {
@@ -199,6 +262,8 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
                     // Normal tag match
                     bool found = false;
                     auto [input_tag_name, input_score] = parse_tag_and_score(input_tag);
+                    std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                    std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
                     auto tag_score = get_tag_score(image_tags, input_tag_name);
                     found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                     if (!found) {
@@ -242,11 +307,52 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
         }
         bool match = true;
         // Check if each tag is in the matrix
+        std::string tag_group = "";
         for (const auto& input_tag : input_tags) {
-            if (input_tag[0] == '-') {
+            if (!tag_group.empty() && input_tag.back() != ']' && input_tag[0] != '[') {
+                tag_group += input_tag + ",";
+                continue;
+            }
+            if (input_tag[0] == '[') {
+                tag_group += input_tag + ',';
+            } else if (input_tag.back() == ']') {
+                tag_group += input_tag;
+                // Extract tags from the input
+                auto tags = extract_tags(tag_group);
+                bool match_curr_tag_group = false;
+                for (const auto& tag : tags) {
+                    if (tag[0] == '-') {
+                        std::string exclude_tag = tag.substr(1);
+                        auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                        std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                        std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
+                        auto tag_score = get_tag_score(image_tags, input_tag_name);
+                        bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
+                        if (!found) {
+                            match_curr_tag_group = true;
+                            break;
+                        }
+                    } else {
+                        std::string include_tag = tag;
+                        auto [input_tag_name, input_score] = parse_tag_and_score(include_tag);
+                        std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                        std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
+                        auto tag_score = get_tag_score(image_tags, input_tag_name);
+                        bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
+                        if (found) {
+                            match_curr_tag_group = true;
+                            break;
+                        }
+                    }
+                }
+                match = match && match_curr_tag_group;
+                tag_group = ""; // Reset for next group
+            } else if (input_tag[0] == '-') {
                 // If tag starts with '-', exclude this tag
                 std::string exclude_tag = input_tag.substr(1);
                 auto [input_tag_name, input_score] = parse_tag_and_score(exclude_tag);
+                std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
                 auto tag_score = get_tag_score(image_tags, input_tag_name);
                 bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                 if (found) {
@@ -256,6 +362,8 @@ std::vector<std::string> get_image_files_by_tags(const std::vector<std::string>&
             } else {
                 // Normal tag match
                 auto [input_tag_name, input_score] = parse_tag_and_score(input_tag);
+                std::transform(input_tag_name.begin(), input_tag_name.end(), input_tag_name.begin(), ::tolower);
+                std::replace(input_tag_name.begin(), input_tag_name.end(), ' ', '_');
                 auto tag_score = get_tag_score(image_tags, input_tag_name);
                 bool found = tag_score.has_value() && (input_score == 0.0f || tag_score.value() >= input_score);
                 if (!found) {
@@ -379,6 +487,7 @@ int main() {
             return 1;
         }
         fin >> cached_cg_list;
+        // cached_cg_list = cached_cg_list.subm(matrix_impl::Slice(0, 10000));
         std::cout << "Loaded CG list with " << cached_cg_list.extent(0) << " entries." << std::endl;
         cached_tags = load_tags(cached_cg_list);
         int total_tags = 0;
